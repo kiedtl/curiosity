@@ -1,0 +1,15 @@
+[package]
+name = "gc"
+version = "0.1.0"
+authors = ["Kiëd Llaentenn <kiedtl@tilde.team>"]
+edition = "2018"
+
+[dependencies]
+gemtext = "0.2"
+webpki = "0.21"
+url = "2"
+rustls = { version = "0.18", features = ["dangerous_configuration"] }
+
+tokio-rustls = { version = "0.14", features = ["dangerous_configuration"] }
+tokio = { version = "0.2", features = ["full"] }
+smol = { version = "0.3", features = ["tokio02"] }
