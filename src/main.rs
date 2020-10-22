@@ -8,6 +8,25 @@ use gemtext::*;
 use std::error::Error;
 use std::collections::HashMap;
 
+#[derive(Clone, Debug)]
+struct UrlInfo {
+    visited: bool,
+    found: usize,
+    refers: Vec<String>,
+}
+
+impl UrlInfo {
+    pub fn new(_ref: String) -> Self {
+        Self {
+            visited: true,
+            found: 1,
+            refers: vec![_ref],
+        }
+    }
+}
+
+const MAX: usize = 20;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let urlstr = "gemini://gemini.circumlunar.space:1965/";
 
@@ -17,55 +36,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .set_certificate_verifier(Arc::new(NoCertificateVerification {}));
 
 
-    crawl(urlstr, cfg)?;
+    let visited = crawl(urlstr, cfg)?;
+    println!("data({}): {:#?}", visited.len(), visited);
+        //visited.iter().map(|u| u.0).collect::<Vec<_>>());
+
     Ok(())
 }
 
 fn crawl(start: &str, cfg: tokio_rustls::rustls::ClientConfig)
-    -> Result<(), Box<dyn Error>>
+    -> Result<HashMap<String, UrlInfo>, Box<dyn Error>>
 {
     let start = parse_url(None, start)?;
 
     // map of visited urls
-    let mut visited: HashMap<String, bool> = HashMap::new();
+    let mut visited: HashMap<String, UrlInfo> = HashMap::new();
 
     // queue to visit
     let mut queue: Vec<Url> = Vec::new();
 
     // start crawling with the first url
     let response = smol::run(get(start.clone(), cfg.clone()))?;
-    let urls = extract(start, response);
+    let urls = extract(start.clone(), response);
 
     for url in &urls {
         queue.push(url.clone());
-        visited.insert(url.to_string(), true);
+        visited.insert(url.to_string(), UrlInfo::new(start.to_string()));
     }
-
-    const MAX: usize = 20;
 
     // main crawl
     while queue.len() > 0 && visited.len() < MAX {
-        let url = queue.pop().unwrap();
+        let link = queue.pop().unwrap();
 
-        let response = smol::run(get(url.clone(), cfg.clone()))?;
-        let urls = extract(url, response);
+        let response = smol::run(get(link.clone(), cfg.clone()))?;
+        let urls = extract(link.clone(), response);
 
         for url in &urls {
-            if visited.get(&url.to_string())
-                .unwrap_or(&false) == &false {
-                    queue.push(url.clone());
-                    visited.insert(url.to_string(), true);
+            if !visited.contains_key(&url.to_string()) {
+                queue.push(url.clone());
+                visited.insert(url.to_string(), UrlInfo::new(link.to_string()));
 
-                    if visited.len() >= MAX {
-                        break;
-                    }
+                if visited.len() >= MAX {
+                    break;
+                }
+            } else {
+                let mut info = visited.get_mut(&url.to_string()).unwrap();
+                info.found += 1;
+                info.refers.push(link.to_string());
             }
         }
     }
 
-    println!("data({}): {:#?}", visited.len(),
-        visited.iter().map(|u| u.0).collect::<Vec<_>>());
-    Ok(())
+    Ok(visited)
 }
 
 
