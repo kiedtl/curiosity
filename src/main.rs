@@ -55,8 +55,8 @@ fn crawl(start: &str, cfg: tokio_rustls::rustls::ClientConfig)
     let mut queue: Vec<Url> = Vec::new();
 
     // start crawling with the first url
-    let response = smol::run(get(start.clone(), cfg.clone()))?;
-    let urls = extract(start.clone(), response);
+    let response = smol::run(get(&start, cfg.clone()))?;
+    let urls = extract(&start, response);
 
     for url in &urls {
         queue.push(url.clone());
@@ -67,8 +67,8 @@ fn crawl(start: &str, cfg: tokio_rustls::rustls::ClientConfig)
     while queue.len() > 0 && visited.len() < MAX {
         let link = queue.pop().unwrap();
 
-        let response = smol::run(get(link.clone(), cfg.clone()))?;
-        let urls = extract(link.clone(), response);
+        let response = smol::run(get(&link, cfg.clone()))?;
+        let urls = extract(&link, response);
 
         for url in &urls {
             if !visited.contains_key(&url.to_string()) {
@@ -90,7 +90,7 @@ fn crawl(start: &str, cfg: tokio_rustls::rustls::ClientConfig)
 }
 
 
-fn extract(base_url: Url, data: Vec<u8>) -> Vec<Url> {
+fn extract(base_url: &Url, data: Vec<u8>) -> Vec<Url> {
     let data_s = data.iter().map(|b| *b as char)
         .collect::<String>();
     let parsed = gemtext::parse(&data_s);
@@ -100,9 +100,9 @@ fn extract(base_url: Url, data: Vec<u8>) -> Vec<Url> {
     for node in parsed {
         match node {
             Node::Link { to, name: _ } => {
-                match parse_url(Some(base_url.clone()), to.clone()) {
+                match parse_url(Some(&base_url), to.clone()) {
                     Ok(u) => found.push(u),
-                    Err(_) => (), //eprintln!("debug: failed to parse {}: {}", to, e),
+                    Err(_) => (),
                 }
             },
             _ => (),
@@ -112,7 +112,7 @@ fn extract(base_url: Url, data: Vec<u8>) -> Vec<Url> {
     found
 }
 
-fn parse_url<T>(base_u: Option<Url>, u: T) -> Result<Url, Box<dyn Error>>
+fn parse_url<T>(base_u: Option<&Url>, u: T) -> Result<Url, Box<dyn Error>>
 where
     T: Into<String> + Clone
 {
@@ -162,7 +162,7 @@ impl rustls::ServerCertVerifier for NoCertificateVerification {
     }
 }
 
-async fn get(ur: Url, cfg: tokio_rustls::rustls::ClientConfig)
+async fn get(ur: &Url, cfg: tokio_rustls::rustls::ClientConfig)
     -> Result<Vec<u8>, Box<dyn std::error::Error>>
 {
     use tokio::io::{AsyncWriteExt, AsyncReadExt};
