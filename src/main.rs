@@ -1,14 +1,18 @@
 use url::{Url, ParseError};
-use std::sync::Arc;
-use tokio::net::{
-    TcpStream
-};
+use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use gemtext::*;
+use serde::Serialize;
+
+use std::sync::Arc;
 use std::error::Error;
 use std::collections::HashMap;
+use std::fs;
 
-#[derive(Clone, Debug)]
+// stop crawling after encountering MAX urls
+const MAX: usize = 1_000_000;
+
+#[derive(Clone, Debug, Serialize)]
 struct UrlInfo {
     visited: bool,
     found: usize,
@@ -25,9 +29,13 @@ impl UrlInfo {
     }
 }
 
-const MAX: usize = 20;
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let output = if std::env::args().count() < 2 {
+        String::from("results.json")
+    } else {
+        std::env::args().collect::<Vec<_>>()[1].clone()
+    };
+
     let urlstr = "gemini://gemini.circumlunar.space:1965/";
 
     let mut cfg = tokio_rustls::rustls::ClientConfig::new();
@@ -37,10 +45,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
     let visited = crawl(urlstr, cfg)?;
-    println!("data({}): {:#?}", visited.len(), visited);
-        //visited.iter().map(|u| u.0).collect::<Vec<_>>());
+    fs::write(&output, serde_json::to_string(&visited)?.as_bytes())?;
+
+    println!("\nstored capsule data in {}", output);
 
     Ok(())
+}
+
+fn status(queue_size: usize, visited_size: usize, current_harvest: usize)
+{
+    print!("\r{q:>0$} queued, {v:>0$} visited     ({ch} now)",
+        6, q = queue_size, v = visited_size, ch = current_harvest);
 }
 
 fn crawl(start: &str, cfg: tokio_rustls::rustls::ClientConfig)
@@ -83,6 +98,8 @@ fn crawl(start: &str, cfg: tokio_rustls::rustls::ClientConfig)
                 info.found += 1;
                 info.refers.push(link.to_string());
             }
+
+            status(queue.len(), visited.len(), urls.len());
         }
     }
 
