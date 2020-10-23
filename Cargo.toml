@@ -5,12 +5,12 @@ authors = ["Kiëd Llaentenn <kiedtl@tilde.team>"]
 edition = "2018"
 
 [dependencies]
-gemtext = "0.2"
+gemtext = { version = "0.2", path = "gemtext" }
 webpki = "0.21"
 url = "2"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tokio-rustls = { version = "0.14", features = ["dangerous_configuration"] }
-tokio = { version = "0.2", features = ["full"] }
+tokio = { version = "0.2", features = ["full", "time"] }
 smol = { version = "0.3", features = ["tokio02"] }
 rustls = { version = "0.18", features = ["dangerous_configuration"] }

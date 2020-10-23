@@ -1,1 +1,21 @@
-1817	start
+2020-10-22	1818	build release (89 crates!)
+2020-10-22	1827	begin crawling
+2020-10-22	1848	restart crawler...
+2020-10-22	2016	restart crawler again after crash...
+2020-10-22	2037	1305 links crawled
+2020-10-22	2045	2992 links crawled
+2020-10-22	2128	6292 links crawled
+2020-10-22	2303	crashed :(
+2020-10-22	2305	restarted again
+2020-10-23	0716	19374 links crawled
+2020-10-23	1237	crawler hung; stopped
+2020-10-23	1257	add timeout+autosave feature
+2020-10-23	1257	start crawler
+2020-10-23	1303	restart crawler with minor bug fix
+2020-10-23	1316	1000 links crawled
+2020-10-23	1431	12230 links crawled
+2020-10-23	1455	15000 links crawled
+2020-10-23	1537	20195 links crawled
+2020-10-23	1621	22267 links crawled
+2020-10-23	1823	40000 links crawled
+2020-10-23	1825	crashed, due to a bug in gemtext (lib.rs:241).

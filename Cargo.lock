@@ -214,8 +214,6 @@ dependencies = [
 [[package]]
 name = "gemtext"
 version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eb76a04b598440b386caa0893dd7b8228a4b555692d2e4f04636a238b5c4b5b"
 
 [[package]]
 name = "hermit-abi"

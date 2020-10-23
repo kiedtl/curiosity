@@ -7,10 +7,15 @@ use serde::Serialize;
 use std::sync::Arc;
 use std::error::Error;
 use std::collections::HashMap;
+use std::time::Duration;
 use std::fs;
 
-// stop crawling after encountering MAX urls
 const MAX: usize = 1_000_000;
+const TIMEOUT_MS: u64 = 20_000;
+const SAVEFREQ: usize = 5000;
+
+const START_URL: &'static str = "gemini://gemini.circumlunar.space:1965/";
+const OUTFILE: &'static str = "results.json";
 
 #[derive(Clone, Debug, Serialize)]
 struct UrlInfo {
@@ -30,25 +35,13 @@ impl UrlInfo {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let output = if std::env::args().count() < 2 {
-        String::from("results.json")
-    } else {
-        std::env::args().collect::<Vec<_>>()[1].clone()
-    };
-
-    let urlstr = "gemini://gemini.circumlunar.space:1965/";
-
     let mut cfg = tokio_rustls::rustls::ClientConfig::new();
     cfg
         .dangerous()
         .set_certificate_verifier(Arc::new(NoCertificateVerification {}));
 
 
-    let visited = crawl(urlstr, cfg)?;
-    fs::write(&output, serde_json::to_string(&visited)?.as_bytes())?;
-
-    println!("\nstored capsule data in {}", output);
-
+    smol::run(crawl(START_URL, cfg))?;
     Ok(())
 }
 
@@ -58,9 +51,15 @@ fn status(queue_size: usize, visited_size: usize, current_harvest: usize)
         6, q = queue_size, v = visited_size, ch = current_harvest);
 }
 
-fn crawl(start: &str, cfg: tokio_rustls::rustls::ClientConfig)
-    -> Result<HashMap<String, UrlInfo>, Box<dyn Error>>
+async fn crawl(start: &str, cfg: tokio_rustls::rustls::ClientConfig)
+    -> Result<(), Box<dyn Error>>
 {
+    use tokio::time::timeout;
+    let duration = Duration::from_millis(TIMEOUT_MS);
+
+    //use tokio::sync::oneshot;
+    //let (tx, rx) = oneshot::channel();
+
     let start = parse_url(None, start)?;
 
     // map of visited urls
@@ -70,7 +69,7 @@ fn crawl(start: &str, cfg: tokio_rustls::rustls::ClientConfig)
     let mut queue: Vec<Url> = Vec::new();
 
     // start crawling with the first url
-    let response = smol::run(get(&start, cfg.clone()))?;
+    let response = get(&start, cfg.clone()).await?;
     let urls = extract(&start, response);
 
     for url in &urls {
@@ -79,31 +78,58 @@ fn crawl(start: &str, cfg: tokio_rustls::rustls::ClientConfig)
     }
 
     // main crawl
+    let mut savectr = 0;
     while queue.len() > 0 && visited.len() < MAX {
+        // move on to the next link
         let link = queue.pop().unwrap();
 
-        let response = smol::run(get(&link, cfg.clone()))?;
+        // get gemini text
+        let response = match timeout(duration, get(&link, cfg.clone())).await {
+            Ok(result) => match result {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("\nfailed to fetch {}: {}", link.to_string(), e);
+                    continue;
+                },
+            },
+            Err(_) => {
+                eprintln!("\nfailed to fetch {}: timed out", link.to_string());
+                continue;
+            },
+        };
+
+        // ...extract urls, and store them to crawl later
         let urls = extract(&link, response);
+        status(queue.len(), visited.len(), urls.len());
+
 
         for url in &urls {
             if !visited.contains_key(&url.to_string()) {
                 queue.push(url.clone());
                 visited.insert(url.to_string(), UrlInfo::new(link.to_string()));
+                savectr += 1;
 
                 if visited.len() >= MAX {
                     break;
+                }
+
+                if savectr == SAVEFREQ {
+                    savectr = 0;
+                    fs::write(OUTFILE,
+                        serde_json::to_string(&visited)?.as_bytes())?;
+                    println!("\nstored capsule data in {}", OUTFILE);
                 }
             } else {
                 let mut info = visited.get_mut(&url.to_string()).unwrap();
                 info.found += 1;
                 info.refers.push(link.to_string());
             }
-
-            status(queue.len(), visited.len(), urls.len());
         }
     }
 
-    Ok(visited)
+    fs::write(OUTFILE, serde_json::to_string(&visited)?.as_bytes())?;
+    println!("\nstored capsule data in {}", OUTFILE);
+    Ok(())
 }
 
 
@@ -153,7 +179,8 @@ where
     };
 
     if ur.port().is_none() {
-        ur.set_port(Some(1965)).unwrap();
+        // meh, don't need to unwrap this
+        let _ = ur.set_port(Some(1965));
     }
 
     if ur.scheme() != "gemini" {
@@ -185,7 +212,11 @@ async fn get(ur: &Url, cfg: tokio_rustls::rustls::ClientConfig)
     use tokio::io::{AsyncWriteExt, AsyncReadExt};
 
     let cfg = Arc::new(cfg);
-    let host = ur.host_str().unwrap();
+    let host = match ur.host_str() {
+        Some(h) => h,
+        None => return Err("url's host str == None")?,
+    };
+
     let name_ref = webpki::DNSNameRef::try_from_ascii_str(host)?;
     let config = TlsConnector::from(cfg);
 

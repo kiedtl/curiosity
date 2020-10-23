@@ -233,7 +233,7 @@ pub fn parse(doc: &str) -> Vec<Node> {
             let sp = line[2..].split_ascii_whitespace().collect::<Vec<&str>>();
 
             match sp.len() {
-                //#0 => (),
+                0 => (),
                 1 => result.push(Node::Link {
                     to: sp[0].trim().to_string(),
                     name: None,
