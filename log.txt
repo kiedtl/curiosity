@@ -18,4 +18,6 @@
 2020-10-23	1537	20195 links crawled
 2020-10-23	1621	22267 links crawled
 2020-10-23	1823	40000 links crawled
-2020-10-23	1825	crashed, due to a bug in gemtext (lib.rs:241).
+2020-10-23	1825	crashed, due to a bug in gemtext (lib.rs:241)
+2020-10-23	1850	restart crawler, reusing old data
+2020-10-23	1852	45181 links crawled
