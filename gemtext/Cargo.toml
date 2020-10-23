@@ -1,0 +1,15 @@
+[package]
+name = "gemtext"
+version = "0.2.1"
+authors = ["Christine Dodrill <me@christine.website>"]
+edition = "2018"
+license = "0BSD"
+description = "A gemini client and server for Rust"
+repository = "https://tulpa.dev/cadey/maj"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[dev-dependencies]
+pretty_env_logger = "0.4"
