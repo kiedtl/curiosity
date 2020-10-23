@@ -2,7 +2,7 @@ use url::{Url, ParseError};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use gemtext::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
 use std::error::Error;
@@ -17,7 +17,7 @@ const SAVEFREQ: usize = 5000;
 const START_URL: &'static str = "gemini://gemini.circumlunar.space:1965/";
 const OUTFILE: &'static str = "results.json";
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct UrlInfo {
     visited: bool,
     found: usize,
@@ -35,13 +35,25 @@ impl UrlInfo {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = std::env::args().collect::<Vec<_>>();
+    let mut visited = HashMap::new();
+
+    if args.len() > 1 {
+        eprint!("Reading from {}... ", &args[1]);
+        let json = fs::read_to_string(&args[1])?;
+
+        eprint!("done\nDeserializing JSON data... ");
+        visited = serde_json::from_str(&json)?;
+        eprint!("done\n");
+    }
+
     let mut cfg = tokio_rustls::rustls::ClientConfig::new();
     cfg
         .dangerous()
         .set_certificate_verifier(Arc::new(NoCertificateVerification {}));
 
 
-    smol::run(crawl(START_URL, cfg))?;
+    smol::run(crawl(visited, START_URL, cfg))?;
     Ok(())
 }
 
@@ -51,8 +63,8 @@ fn status(queue_size: usize, visited_size: usize, current_harvest: usize)
         6, q = queue_size, v = visited_size, ch = current_harvest);
 }
 
-async fn crawl(start: &str, cfg: tokio_rustls::rustls::ClientConfig)
-    -> Result<(), Box<dyn Error>>
+async fn crawl(mut visited: HashMap<String, UrlInfo>, start: &str,
+    cfg: tokio_rustls::rustls::ClientConfig) -> Result<(), Box<dyn Error>>
 {
     use tokio::time::timeout;
     let duration = Duration::from_millis(TIMEOUT_MS);
@@ -61,9 +73,6 @@ async fn crawl(start: &str, cfg: tokio_rustls::rustls::ClientConfig)
     //let (tx, rx) = oneshot::channel();
 
     let start = parse_url(None, start)?;
-
-    // map of visited urls
-    let mut visited: HashMap<String, UrlInfo> = HashMap::new();
 
     // queue to visit
     let mut queue: Vec<Url> = Vec::new();
