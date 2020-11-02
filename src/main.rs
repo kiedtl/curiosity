@@ -19,7 +19,6 @@ const OUTFILE: &'static str = "results.json";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct UrlInfo {
-    visited: bool,
     found: usize,
     refers: Vec<String>,
 }
@@ -27,7 +26,6 @@ struct UrlInfo {
 impl UrlInfo {
     pub fn new(_ref: String) -> Self {
         Self {
-            visited: true,
             found: 1,
             refers: vec![_ref],
         }
