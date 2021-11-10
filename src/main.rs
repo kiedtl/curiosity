@@ -10,38 +10,43 @@ use std::collections::HashMap;
 use std::time::Duration;
 use std::fs;
 
-const MAX: usize = 1_000_000;
-const TIMEOUT_MS: u64 = 20_000;
-const SAVEFREQ: usize = 5000;
+const TIMEOUT_MS: u64 = 5000;
+const SAVEFREQ: usize = 1000;
 
 const START_URL: &'static str = "gemini://gemini.circumlunar.space:1965/";
 const OUTFILE: &'static str = "results.json";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct UrlInfo {
-    found: usize,
-    refers: Vec<String>,
+    referred_from: Vec<String>,
+    timed_out: bool,
+    malformed_response: bool,
+    response_code: usize,
+    metatext: String,
 }
 
 impl UrlInfo {
     pub fn new(_ref: String) -> Self {
         Self {
-            found: 1,
-            refers: vec![_ref],
+            referred_from: vec![_ref],
+            timed_out: false,
+            malformed_response: false,
+            response_code: 0,
+            metatext: "".to_string(),
         }
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().collect::<Vec<_>>();
-    let mut visited = HashMap::new();
+    let mut entries = HashMap::new();
 
     if args.len() > 1 {
         eprint!("Reading from {}... ", &args[1]);
         let json = fs::read_to_string(&args[1])?;
 
         eprint!("done\nDeserializing JSON data... ");
-        visited = serde_json::from_str(&json)?;
+        entries = serde_json::from_str(&json)?;
         eprint!("done\n");
     }
 
@@ -51,24 +56,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .set_certificate_verifier(Arc::new(NoCertificateVerification {}));
 
 
-    smol::run(crawl(visited, START_URL, cfg))?;
+    smol::run(crawl(entries, START_URL, cfg))?;
     Ok(())
 }
 
-fn status(queue_size: usize, visited_size: usize, current_harvest: usize)
-{
-    print!("\r{q:>0$} queued, {v:>0$} visited     ({ch} now)",
-        6, q = queue_size, v = visited_size, ch = current_harvest);
-}
-
-async fn crawl(mut visited: HashMap<String, UrlInfo>, start: &str,
+async fn crawl(mut entries: HashMap<String, UrlInfo>, start: &str,
     cfg: tokio_rustls::rustls::ClientConfig) -> Result<(), Box<dyn Error>>
 {
     use tokio::time::timeout;
     let duration = Duration::from_millis(TIMEOUT_MS);
-
-    //use tokio::sync::oneshot;
-    //let (tx, rx) = oneshot::channel();
 
     let start = parse_url(None, start)?;
 
@@ -77,18 +73,28 @@ async fn crawl(mut visited: HashMap<String, UrlInfo>, start: &str,
 
     // start crawling with the first url
     let response = get(&start, cfg.clone()).await?;
-    let urls = extract(&start, response);
+    let urls = extract_urls(&start, response);
 
     for url in &urls {
         queue.push(url.clone());
-        visited.insert(url.to_string(), UrlInfo::new(start.to_string()));
+        entries.insert(url.to_string(), UrlInfo::new(start.to_string()));
     }
 
     // main crawl
     let mut savectr = 0;
-    while queue.len() > 0 && visited.len() < MAX {
+    while queue.len() > 0 {
+        savectr += 1;
+        if savectr == SAVEFREQ {
+            save_data(&mut entries)?;
+            savectr = 0;
+        }
+
+        status(queue.len(), entries.len(), 0);
+
         // move on to the next link
         let link = queue.pop().unwrap();
+        let link_str = &link.to_string();
+        let mut link_info = entries.get_mut(link_str).unwrap();
 
         // get gemini text
         let response = match timeout(duration, get(&link, cfg.clone())).await {
@@ -100,47 +106,107 @@ async fn crawl(mut visited: HashMap<String, UrlInfo>, start: &str,
                 },
             },
             Err(_) => {
-                eprintln!("\nfailed to fetch {}: timed out", link.to_string());
+                link_info.timed_out = true;
                 continue;
             },
         };
 
-        // ...extract urls, and store them to crawl later
-        let urls = extract(&link, response);
-        status(queue.len(), visited.len(), urls.len());
+        if response.len() == 0 {
+            continue;
+        }
 
+        let response_str = match std::str::from_utf8(&response) {
+            Ok(s) => s,
+            Err(_) => { link_info.malformed_response = true; continue; },
+        };
 
-        for url in &urls {
-            if !visited.contains_key(&url.to_string()) {
-                queue.push(url.clone());
-                visited.insert(url.to_string(), UrlInfo::new(link.to_string()));
-                savectr += 1;
+        let header;
+        if let Some(h) = response_str.split("\n").next() {
+            header = h;
+        } else {
+            link_info.malformed_response = true;
+            continue;
+        }
 
-                if visited.len() >= MAX {
-                    break;
+        let response_code_str = header[0..=1].to_string();
+        let response_code = match response_code_str.parse::<usize>() {
+            Ok(r) => r,
+            Err(_) => { link_info.malformed_response = true; continue; },
+        };
+        let metatext = header[3..].to_string();
+
+        link_info.response_code = response_code;
+        link_info.metatext = metatext.clone();
+
+        match response_code {
+            10 => (), // input required
+            11 => (), // sensitive input required
+            // 20 success
+            20 => {
+                if metatext.starts_with("text/gemini") {
+                    handle_gemtext(&mut entries, &mut queue, &link, response);
                 }
-
-                if savectr == SAVEFREQ {
-                    savectr = 0;
-                    fs::write(OUTFILE,
-                        serde_json::to_string(&visited)?.as_bytes())?;
-                    println!("\nstored capsule data in {}", OUTFILE);
-                }
-            } else {
-                let mut info = visited.get_mut(&url.to_string()).unwrap();
-                info.found += 1;
-                info.refers.push(link.to_string());
-            }
+            },
+            30 => (), // temporary redirect
+            31 => (), // permanent redirect
+            40 => (), // temporary failure
+            41 => (), // server unavailable (load or maintainance)
+            42 => (), // cgi/cms error
+            43 => (), // proxy error
+            44 => (), // slow down (ratelimited)
+            50 => (), // permanent failure
+            51 => (), // not found
+            52 => (), // gone (removed permanently)
+            53 => (), // proxy request refused
+            59 => (), // malformed request
+            60 => (), // client cert required
+            61 => (), // unauthorised client cert used
+            62 => (), // invalid client cert used
+            _ => (),  // ???
         }
     }
 
-    fs::write(OUTFILE, serde_json::to_string(&visited)?.as_bytes())?;
+    save_data(&mut entries)?;
+    Ok(())
+}
+
+fn handle_gemtext(
+    entries: &mut HashMap<String, UrlInfo>,
+    queue: &mut Vec<Url>,
+    base_url: &Url,
+    data: Vec<u8>
+) {
+    // ...extract urls, and store them to crawl later
+    let urls = extract_urls(&base_url, data);
+
+    for url in &urls {
+        status(queue.len(), entries.len(), urls.len());
+
+        if !entries.contains_key(&url.to_string()) {
+            queue.push(url.clone());
+            entries.insert(url.to_string(), UrlInfo::new(base_url.to_string()));
+        } else {
+            let info = entries.get_mut(&url.to_string()).unwrap();
+            info.referred_from.push(base_url.to_string());
+        }
+    }
+}
+
+fn status(
+    queue_size: usize, entries: usize,
+    current_harvest: usize,
+) {
+    print!("\r{q:>0$} queued, {v:>0$} entries     ({ch} now)",
+        6, q = queue_size, v = entries, ch = current_harvest);
+}
+
+fn save_data(entries: &mut HashMap<String, UrlInfo>) -> Result<(), Box<dyn Error>> {
+    fs::write(OUTFILE, serde_json::to_string(&entries)?.as_bytes())?;
     println!("\nstored capsule data in {}", OUTFILE);
     Ok(())
 }
 
-
-fn extract(base_url: &Url, data: Vec<u8>) -> Vec<Url> {
+fn extract_urls(base_url: &Url, data: Vec<u8>) -> Vec<Url> {
     let data_s = data.iter().map(|b| *b as char)
         .collect::<String>();
     let parsed = gemtext::parse(&data_s);
